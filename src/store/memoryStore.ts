@@ -10,7 +10,7 @@ import {
   readRawStorage,
   STORAGE_KEY,
 } from './safeStorage';
-import { CURRENT_STORE_VERSION, migrateMemoriesState } from './migrations';
+import { CURRENT_STORE_VERSION, migrateMemoriesState, validatePersistedState } from './migrations';
 
 export interface MemoryInput {
   location: string;
@@ -192,6 +192,14 @@ export const useMemoryStore = create<MemoryStore>()(
       version: CURRENT_STORE_VERSION,
       partialize: (state) => ({ memories: state.memories }),
       migrate: (persisted, fromVersion) => migrateMemoriesState(persisted, fromVersion),
+      // 每次水合的必经关口（新旧版本都走）：整库结构/字段校验。
+      // 任何一条记录损坏就抛错，由 onRehydrateStorage 的 error 分支进入恢复界面，
+      // 坏数据不会被合并进 store，也就不可能击穿页面。
+      merge: (persisted, current) => {
+        if (persisted === undefined || persisted === null) return current;
+        const safe = validatePersistedState(persisted);
+        return { ...current, ...safe };
+      },
       onRehydrateStorage: () => (_state, error) => {
         if (error) {
           const message = error instanceof Error ? error.message : '本地数据迁移失败';

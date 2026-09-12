@@ -11,6 +11,9 @@ import {
 interface Props {
   message: string;
   migration: boolean;
+  /** 渲染崩溃兜底场景：重试/重置后需要整页刷新重新水合 */
+  renderError?: boolean;
+  onAfterRetry?: () => void;
 }
 
 function downloadBackup(raw: string) {
@@ -26,7 +29,7 @@ function downloadBackup(raw: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function StorageRecoveryModal({ message, migration }: Props) {
+export default function StorageRecoveryModal({ message, migration, renderError = false, onAfterRetry }: Props) {
   const retryHydration = useMemoryStore((s) => s.retryHydration);
   const showToast = useToastStore((s) => s.showToast);
   const [showRaw, setShowRaw] = useState(false);
@@ -68,6 +71,21 @@ export default function StorageRecoveryModal({ message, migration }: Props) {
       showToast('清除失败，请手动清理浏览器本地存储', 'error');
       return;
     }
+    if (renderError) {
+      onAfterRetry?.();
+      window.location.reload();
+      return;
+    }
+    retryHydration();
+  };
+
+  const handleRetry = () => {
+    if (renderError) {
+      // 渲染崩溃后页面状态不可信，整页刷新重新走水合校验
+      onAfterRetry?.();
+      window.location.reload();
+      return;
+    }
     retryHydration();
   };
 
@@ -82,7 +100,9 @@ export default function StorageRecoveryModal({ message, migration }: Props) {
             </div>
             <div className="min-w-0">
               <h2 className="font-serif text-xl sm:text-2xl font-bold text-ink-800">
-                {migration ? '旧版气味档案升级失败' : '本地档案读取失败'}
+                {renderError
+                  ? '气味档案数据异常'
+                  : migration ? '旧版气味档案升级失败' : '本地档案读取失败'}
               </h2>
               <p className="text-sm text-ink-700/70 mt-1 leading-relaxed">
                 别担心，你的原始数据<strong className="text-brick-600">没有被修改或覆盖</strong>，
@@ -130,9 +150,9 @@ export default function StorageRecoveryModal({ message, migration }: Props) {
               {copied ? <Check className="w-4 h-4 text-moss-500" /> : <Copy className="w-4 h-4" />}
               {copied ? '已复制' : '复制原始数据'}
             </button>
-            <button onClick={retryHydration} className="btn-secondary justify-center sm:col-span-2 !bg-moss-100 !border-moss-300 !text-moss-600 hover:!bg-moss-200">
+            <button onClick={handleRetry} className="btn-secondary justify-center sm:col-span-2 !bg-moss-100 !border-moss-300 !text-moss-600 hover:!bg-moss-200">
               <RotateCcw className="w-4 h-4" />
-              我已处理好，重试加载
+              {renderError ? '我已处理好，刷新页面' : '我已处理好，重试加载'}
             </button>
           </div>
 
