@@ -4,7 +4,13 @@ import type { SmellMemory, Season, SmellType, Emotion, FollowUpFrequency, Follow
 import { generateId } from '../utils/helpers';
 import { advanceDate } from '../utils/followUp';
 import { mockMemories } from '../data/mockData';
-import { safeLocalStorage } from './safeStorage';
+import {
+  safeLocalStorage,
+  setStorageWritesBlocked,
+  readRawStorage,
+  STORAGE_KEY,
+} from './safeStorage';
+import { CURRENT_STORE_VERSION, migrateMemoriesState } from './migrations';
 
 export interface MemoryInput {
   location: string;
@@ -25,18 +31,26 @@ export interface FollowUpInput {
   note: string;
 }
 
+export interface BootError {
+  message: string;
+  /** 是否因迁移失败引起（决定恢复界面的措辞与重置按钮） */
+  migration: boolean;
+}
+
 interface MemoryStore {
   memories: SmellMemory[];
+  /** 首次读取本地数据是否已完成（完成前不允许写入示例数据） */
+  hydrated: boolean;
+  /** 本地数据迁移/解析失败时的错误信息；非空时界面进入恢复流程 */
+  bootError: BootError | null;
   addMemory: (input: MemoryInput) => void;
   updateMemory: (id: string, input: MemoryInput) => void;
   deleteMemory: (id: string) => void;
-  /** 设置/更新一条气味的回访计划 */
   setFollowUp: (memoryId: string, input: FollowUpInput) => boolean;
-  /** 移除回访计划（含历史记录） */
   removeFollowUp: (memoryId: string) => void;
-  /** 完成一次回访：写入一条记录并推进下次日期；返回本次记录 id，重复连点返回 null */
   completeFollowUp: (memoryId: string) => string | null;
-  initIfEmpty: () => void;
+  /** 重新读取一次本地数据（用户修复后点“重试”） */
+  retryHydration: () => void;
 }
 
 /**
@@ -51,10 +65,25 @@ function patchFollowUp(memories: SmellMemory[], memoryId: string, fn: (p: Follow
   return memories.map((m) => (m.id === memoryId && m.follow_up ? { ...m, follow_up: fn(m.follow_up) } : m));
 }
 
+function enterBootError(set: (partial: Partial<MemoryStore>) => void, message: string, migration: boolean) {
+  // 封锁一切写入：原始数据原封不动留在 localStorage，等用户处理
+  setStorageWritesBlocked(true);
+  set({
+    hydrated: true,
+    bootError: {
+      message: message || '本地数据无法读取',
+      migration,
+    },
+  });
+}
+
 export const useMemoryStore = create<MemoryStore>()(
   persist(
     (set, get) => ({
       memories: [],
+      hydrated: false,
+      bootError: null,
+
       addMemory: (input) => {
         const now = new Date().toISOString();
         const newMem: SmellMemory = {
@@ -84,7 +113,6 @@ export const useMemoryStore = create<MemoryStore>()(
 
         const now = new Date().toISOString();
         const existing = target.follow_up;
-        // 编辑计划保留历史；新建计划从空历史开始
         const plan: FollowUpPlan = {
           next_date: input.next_date,
           frequency: input.frequency,
@@ -98,7 +126,6 @@ export const useMemoryStore = create<MemoryStore>()(
             m.id === memoryId ? { ...m, follow_up: plan } : m,
           ),
         });
-        // 计划被手动修改后，放行下一次完成
         lastCompletedAt.delete(memoryId);
         return true;
       },
@@ -134,21 +161,47 @@ export const useMemoryStore = create<MemoryStore>()(
           logs: [log, ...plan.logs],
           updated_at: now.toISOString(),
         };
-        // 计算与写入在同一次同步 set 中完成
         set({ memories: patchFollowUp(get().memories, memoryId, () => updated) });
         lastCompletedAt.set(memoryId, nowMs);
         return logId;
       },
-      initIfEmpty: () => {
-        if (get().memories.length === 0) {
-          set({ memories: mockMemories });
-        }
+
+      retryHydration: () => {
+        // 只解除封锁并重置错误标记；不 setState 内存数据，
+        // 否则 persist 会在重新读取前把（可能仍损坏的）原始数据覆盖掉。
+        setStorageWritesBlocked(false);
+        useMemoryStore.persist.rehydrate();
       },
     }),
     {
-      name: 'scent-memory-storage',
+      name: STORAGE_KEY,
       storage: safeLocalStorage,
-      version: 2,
+      version: CURRENT_STORE_VERSION,
+      partialize: (state) => ({ memories: state.memories }),
+      migrate: (persisted, fromVersion) => migrateMemoriesState(persisted, fromVersion),
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) {
+          // 迁移函数抛错 / JSON 解析失败等：保留原始数据，不做任何写入
+          enterBootError(
+            useMemoryStore.setState.bind(useMemoryStore),
+            error instanceof Error ? error.message : '本地数据迁移失败',
+            true,
+          );
+          return;
+        }
+
+        setStorageWritesBlocked(false);
+
+        // 只有“浏览器里从未存过数据”（首次使用）才放示例；
+        // 用户主动删光档案（持久化为空数组）后刷新必须保持空白，不能被示例覆盖。
+        const hadPersistedData = readRawStorage(STORAGE_KEY) !== null;
+        if (!hadPersistedData) {
+          useMemoryStore.setState({ memories: mockMemories, bootError: null, hydrated: true });
+        } else {
+          // zustand 已合并 memories，这里只需解除错误标记
+          useMemoryStore.setState({ bootError: null, hydrated: true });
+        }
+      },
     },
   ),
 );

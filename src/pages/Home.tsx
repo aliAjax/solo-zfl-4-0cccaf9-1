@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Header from '../components/Header';
 import FilterPanel from '../components/FilterPanel';
 import VisualizationPanel from '../components/VisualizationPanel';
@@ -6,6 +6,7 @@ import MemoryCard from '../components/MemoryCard';
 import MemoryModal from '../components/MemoryModal';
 import FollowUpBoard from '../components/FollowUpBoard';
 import FollowUpModal from '../components/FollowUpModal';
+import StorageRecoveryModal from '../components/StorageRecoveryModal';
 import { useMemoryStore } from '../store/memoryStore';
 import type { FollowUpInput } from '../store/memoryStore';
 import { useToastStore } from '../store/toastStore';
@@ -22,7 +23,10 @@ const defaultFilters: Filters = {
 };
 
 export default function Home() {
-  const { memories, initIfEmpty, addMemory, updateMemory, deleteMemory, setFollowUp } = useMemoryStore();
+  const memories = useMemoryStore((s) => s.memories);
+  const hydrated = useMemoryStore((s) => s.hydrated);
+  const bootError = useMemoryStore((s) => s.bootError);
+  const { addMemory, updateMemory, deleteMemory, setFollowUp } = useMemoryStore();
   const showToast = useToastStore((s) => s.showToast);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -30,10 +34,6 @@ export default function Home() {
   const [editing, setEditing] = useState<SmellMemory | null>(null);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [followUpMemoryId, setFollowUpMemoryId] = useState<string | null>(null);
-
-  useEffect(() => {
-    initIfEmpty();
-  }, [initIfEmpty]);
 
   const filteredMemories = useMemo(
     () => filterMemories(memories, filters),
@@ -91,6 +91,22 @@ export default function Home() {
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   };
+
+  // 本地数据恢复：原始数据迁移/解析失败时，阻断整个界面，防止任何覆盖
+  if (bootError) {
+    return <StorageRecoveryModal message={bootError.message} migration={bootError.migration} />;
+  }
+
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-5xl mb-4 animate-pulse select-none">🌿</div>
+          <p className="font-hand text-2xl text-ochre-600">正在翻开气味档案…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">

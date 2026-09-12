@@ -17,9 +17,52 @@ function emitStorageError(detail: StorageErrorDetail) {
 }
 
 /**
+ * 数据处于“不可写入”状态时置位（如迁移失败后保护旧数据）。
+ * 封锁期间所有 setItem/removeItem 都不会触碰 localStorage，
+ * 避免应用后续任何状态变化把原始数据覆盖掉。
+ */
+let writesBlocked = false;
+
+export function setStorageWritesBlocked(blocked: boolean) {
+  writesBlocked = blocked;
+}
+
+export function isStorageWritesBlocked() {
+  return writesBlocked;
+}
+
+/** 直接读取持久化键的原始字符串（供恢复界面展示/下载），读不到返回 null */
+export function readRawStorage(name: string): string | null {
+  try {
+    return window.localStorage.getItem(name);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 强制清除一个持久化键（无视写入封锁）。
+ * 仅用于恢复界面“已备份后重置”，调用方必须先把原始数据交给用户保存。
+ */
+export function forceClearStorage(name: string): boolean {
+  try {
+    window.localStorage.removeItem(name);
+    writesBlocked = false;
+    return true;
+  } catch (err) {
+    emitStorageError({
+      phase: 'write',
+      message: err instanceof Error ? err.message : '无法清除本地存储',
+    });
+    return false;
+  }
+}
+
+/**
  * 包一层 try/catch 的 localStorage：
  * - 写入失败（隐私模式 / 配额超限 / 被禁用）时给出提示，但本次内存状态仍然生效；
- * - 读取失败时提示并回退到初始空状态，避免整页崩溃。
+ * - 读取失败时提示并回退到初始空状态，避免整页崩溃；
+ * - 写入被封锁时静默拒绝，保护迁移失败用户的原始数据。
  */
 function createSafeLocalStorage(): StateStorage {
   return {
@@ -35,6 +78,7 @@ function createSafeLocalStorage(): StateStorage {
       }
     },
     setItem: (name, value) => {
+      if (writesBlocked) return;
       try {
         window.localStorage.setItem(name, value);
       } catch (err) {
@@ -45,6 +89,7 @@ function createSafeLocalStorage(): StateStorage {
       }
     },
     removeItem: (name) => {
+      if (writesBlocked) return;
       try {
         window.localStorage.removeItem(name);
       } catch (err) {
@@ -58,3 +103,5 @@ function createSafeLocalStorage(): StateStorage {
 }
 
 export const safeLocalStorage = createJSONStorage(createSafeLocalStorage);
+
+export const STORAGE_KEY = 'scent-memory-storage';
