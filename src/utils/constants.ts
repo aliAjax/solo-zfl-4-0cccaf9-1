@@ -2,6 +2,45 @@ export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 export type SmellType = 'woody' | 'floral' | 'fruity' | 'earthy' | 'spicy' | 'sweet' | 'musty' | 'fresh' | 'burnt' | 'other';
 export type Emotion = 'warm' | 'nostalgic' | 'peaceful' | 'melancholy' | 'joyful' | 'uncomfortable' | 'surprising';
 
+/** 回访频率：不重复 / 每周 / 每月 / 每年 */
+export type FollowUpFrequency = 'none' | 'weekly' | 'monthly' | 'yearly';
+
+/** 一次已完成的回访记录 */
+export interface FollowUpLog {
+  /** 实际完成时间 ISO */
+  completed_at: string;
+  /** 这次回访原本安排的日期 YYYY-MM-DD */
+  scheduled_date: string;
+  /** 完成时快照的备注 */
+  note: string;
+}
+
+/** 气味档案的回访计划 */
+export interface FollowUpPlan {
+  /** 下次回访日期 YYYY-MM-DD；计划结束（不重复已完成）后为 null */
+  next_date: string | null;
+  frequency: FollowUpFrequency;
+  /** 计划备注 */
+  note: string;
+  /** 完成历史，最新在最前 */
+  logs: FollowUpLog[];
+  /** 创建时间 ISO */
+  created_at: string;
+  /** 最近一次更新时间 ISO */
+  updated_at: string;
+}
+
+export const FOLLOW_UP_FREQUENCIES: { value: FollowUpFrequency; label: string; short: string }[] = [
+  { value: 'none', label: '不重复', short: '单次' },
+  { value: 'weekly', label: '每周', short: '周' },
+  { value: 'monthly', label: '每月', short: '月' },
+  { value: 'yearly', label: '每年', short: '年' },
+];
+
+export function getFrequencyInfo(f: FollowUpFrequency) {
+  return FOLLOW_UP_FREQUENCIES.find((x) => x.value === f)!;
+}
+
 export interface SmellMemory {
   id: string;
   location: string;
@@ -16,6 +55,8 @@ export interface SmellMemory {
   want_again: boolean;
   created_at: string;
   updated_at: string;
+  /** 回访计划，没有计划时为 null（兼容旧数据） */
+  follow_up?: FollowUpPlan | null;
 }
 
 export const SEASONS: { value: Season; label: string; emoji: string }[] = [

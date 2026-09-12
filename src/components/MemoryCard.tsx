@@ -1,7 +1,9 @@
 import type { SmellMemory } from '../utils/constants';
-import { getSeasonInfo, getSmellTypeInfo, getEmotionInfo } from '../utils/constants';
+import { getSeasonInfo, getSmellTypeInfo, getEmotionInfo, getFrequencyInfo } from '../utils/constants';
 import { formatDate, contrastTextColor } from '../utils/helpers';
-import { Pencil, Trash2, ChevronDown, ChevronUp, Heart } from 'lucide-react';
+import { isPlanActive, relativeDayLabel, daysFromToday } from '../utils/followUp';
+import FollowUpPanel from './FollowUpPanel';
+import { Pencil, Trash2, ChevronDown, ChevronUp, Heart, CalendarClock } from 'lucide-react';
 
 interface Props {
   memory: SmellMemory;
@@ -10,15 +12,27 @@ interface Props {
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onEditFollowUp: () => void;
 }
 
-export default function MemoryCard({ memory, index, isExpanded, onToggle, onEdit, onDelete }: Props) {
+export default function MemoryCard({ memory, index, isExpanded, onToggle, onEdit, onDelete, onEditFollowUp }: Props) {
   const season = getSeasonInfo(memory.season);
   const stype = getSmellTypeInfo(memory.smell_type);
   const emotion = getEmotionInfo(memory.emotion);
 
   const intensityWidth = `${memory.intensity * 10}%`;
   const humidityWidth = `${memory.humidity * 10}%`;
+
+  const planActive = isPlanActive(memory.follow_up);
+  const planDiff = planActive ? daysFromToday(memory.follow_up!.next_date as string) : null;
+  const planBadgeClass =
+    planDiff === null
+      ? ''
+      : planDiff < 0
+        ? 'bg-brick-400/15 text-brick-600'
+        : planDiff === 0
+          ? 'bg-ochre-100 text-ochre-600'
+          : 'bg-moss-100 text-moss-600';
 
   return (
     <article
@@ -77,6 +91,14 @@ export default function MemoryCard({ memory, index, isExpanded, onToggle, onEdit
               {memory.want_again && (
                 <span className="scent-tag bg-moss-100 text-moss-600">
                   <Heart className="w-3 h-3 fill-current" /> 想再闻
+                </span>
+              )}
+              {planActive && (
+                <span className={`scent-tag ${planBadgeClass}`}>
+                  <CalendarClock className="w-3 h-3" />
+                  回访 · {relativeDayLabel(memory.follow_up!.next_date as string)}
+                  {memory.follow_up!.frequency !== 'none' &&
+                    ` · ${getFrequencyInfo(memory.follow_up!.frequency).label}`}
                 </span>
               )}
             </div>
@@ -141,6 +163,9 @@ export default function MemoryCard({ memory, index, isExpanded, onToggle, onEdit
                   {memory.memory_text}
                 </p>
               </div>
+
+              <FollowUpPanel memory={memory} onEditPlan={onEditFollowUp} />
+
               <div className="mt-3 flex items-center justify-between pt-2 border-t border-paper-200/60">
                 <div className="flex items-center gap-1.5 text-[11px] text-ink-700/50">
                   <span>更新于 {formatDate(memory.updated_at)}</span>

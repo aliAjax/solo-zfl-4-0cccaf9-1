@@ -4,7 +4,11 @@ import FilterPanel from '../components/FilterPanel';
 import VisualizationPanel from '../components/VisualizationPanel';
 import MemoryCard from '../components/MemoryCard';
 import MemoryModal from '../components/MemoryModal';
+import FollowUpBoard from '../components/FollowUpBoard';
+import FollowUpModal from '../components/FollowUpModal';
 import { useMemoryStore } from '../store/memoryStore';
+import type { FollowUpInput } from '../store/memoryStore';
+import { useToastStore } from '../store/toastStore';
 import type { Filters } from '../utils/helpers';
 import { filterMemories } from '../utils/helpers';
 import type { SmellMemory } from '../utils/constants';
@@ -18,11 +22,14 @@ const defaultFilters: Filters = {
 };
 
 export default function Home() {
-  const { memories, initIfEmpty, addMemory, updateMemory, deleteMemory } = useMemoryStore();
+  const { memories, initIfEmpty, addMemory, updateMemory, deleteMemory, setFollowUp } = useMemoryStore();
+  const showToast = useToastStore((s) => s.showToast);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<SmellMemory | null>(null);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [followUpMemoryId, setFollowUpMemoryId] = useState<string | null>(null);
 
   useEffect(() => {
     initIfEmpty();
@@ -40,6 +47,25 @@ export default function Home() {
 
   const openAddModal = () => { setEditing(null); setModalOpen(true); };
   const openEditModal = (m: SmellMemory) => { setEditing(m); setModalOpen(true); };
+
+  const openFollowUpModal = (memoryId: string) => {
+    setFollowUpMemoryId(memoryId);
+    setFollowUpOpen(true);
+  };
+  const openFollowUpPicker = () => {
+    setFollowUpMemoryId(null);
+    setFollowUpOpen(true);
+  };
+
+  const handleFollowUpSubmit = (memoryId: string, data: FollowUpInput) => {
+    const ok = setFollowUp(memoryId, data);
+    if (ok) {
+      setExpandedId(memoryId);
+      showToast('回访计划已保存到本地', 'success');
+    } else {
+      showToast('回访计划保存失败：日期或档案无效', 'error');
+    }
+  };
 
   const handleSubmit = (data: MemoryInput) => {
     if (editing) {
@@ -79,6 +105,12 @@ export default function Home() {
         />
 
         <VisualizationPanel memories={filteredMemories} onSelect={scrollToCard} />
+
+        <FollowUpBoard
+          memories={memories}
+          onSelect={scrollToCard}
+          onAddPlan={openFollowUpPicker}
+        />
 
         <section className="mt-2">
           <div className="flex items-center justify-between mb-4">
@@ -126,6 +158,7 @@ export default function Home() {
                     onToggle={() => setExpandedId(expandedId === m.id ? null : m.id)}
                     onEdit={() => openEditModal(m)}
                     onDelete={() => handleDelete(m.id)}
+                    onEditFollowUp={() => openFollowUpModal(m.id)}
                   />
                 </div>
               ))}
@@ -143,6 +176,13 @@ export default function Home() {
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}
         editingData={editing}
+      />
+
+      <FollowUpModal
+        isOpen={followUpOpen}
+        initialMemoryId={followUpMemoryId}
+        onClose={() => setFollowUpOpen(false)}
+        onSubmit={handleFollowUpSubmit}
       />
     </div>
   );

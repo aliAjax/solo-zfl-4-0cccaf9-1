@@ -1,7 +1,14 @@
 import type { SmellMemory } from '../utils/constants';
+import { dateKeyOffset, parseDateKey } from '../utils/followUp';
 
 const now = Date.now();
 const daysAgo = (d: number) => new Date(now - d * 86400000).toISOString();
+/** 某个日期键（相对今天偏移）当天 10 点的 ISO */
+const keyAtNoon = (key: string) => {
+  const d = parseDateKey(key);
+  d.setHours(10, 0, 0, 0);
+  return d.toISOString();
+};
 
 export const mockMemories: SmellMemory[] = [
   {
@@ -18,6 +25,20 @@ export const mockMemories: SmellMemory[] = [
     want_again: true,
     created_at: daysAgo(42),
     updated_at: daysAgo(42),
+    follow_up: {
+      next_date: dateKeyOffset(-3),
+      frequency: 'weekly',
+      note: '留意樟木味是否比上次更淡了，旧毛衣今年有没有拿出来晒过',
+      logs: [
+        {
+          completed_at: daysAgo(10),
+          scheduled_date: dateKeyOffset(-10),
+          note: '味道依旧厚重，柜门上的铜环换了新的',
+        },
+      ],
+      created_at: daysAgo(20),
+      updated_at: keyAtNoon(dateKeyOffset(-10)),
+    },
   },
   {
     id: 'mock-002',
@@ -33,6 +54,14 @@ export const mockMemories: SmellMemory[] = [
     want_again: true,
     created_at: daysAgo(28),
     updated_at: daysAgo(28),
+    follow_up: {
+      next_date: dateKeyOffset(0),
+      frequency: 'monthly',
+      note: '今天梅雨季回访：闻一闻走廊还有没有水泥被浸润的腥甜味',
+      logs: [],
+      created_at: daysAgo(30),
+      updated_at: daysAgo(30),
+    },
   },
   {
     id: 'mock-003',
@@ -63,6 +92,14 @@ export const mockMemories: SmellMemory[] = [
     want_again: true,
     created_at: daysAgo(60),
     updated_at: daysAgo(60),
+    follow_up: {
+      next_date: dateKeyOffset(60),
+      frequency: 'yearly',
+      note: '每年秋天回来闻一次这条街，虽然铺子已经不在了',
+      logs: [],
+      created_at: daysAgo(20),
+      updated_at: daysAgo(20),
+    },
   },
   {
     id: 'mock-005',
@@ -123,5 +160,19 @@ export const mockMemories: SmellMemory[] = [
     want_again: true,
     created_at: daysAgo(3),
     updated_at: daysAgo(2),
+    follow_up: {
+      next_date: null,
+      frequency: 'none',
+      note: '',
+      logs: [
+        {
+          completed_at: daysAgo(2),
+          scheduled_date: dateKeyOffset(-2),
+          note: '又去了一趟海边，咸腥味一样，只是泳衣换成了新买的',
+        },
+      ],
+      created_at: daysAgo(9),
+      updated_at: daysAgo(2),
+    },
   },
 ];
