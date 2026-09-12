@@ -42,7 +42,7 @@ export default class ErrorBoundary extends Component<Props, State> {
     return (
       <StorageRecoveryModal
         message={error.message || '页面渲染时发生未知错误（可能由损坏的本地数据引起）'}
-        migration
+        reason="render"
         renderError
         onAfterRetry={this.handleReload}
       />

@@ -10,7 +10,13 @@ import {
   readRawStorage,
   STORAGE_KEY,
 } from './safeStorage';
-import { CURRENT_STORE_VERSION, migrateMemoriesState, validatePersistedState } from './migrations';
+import {
+  CURRENT_STORE_VERSION,
+  migrateMemoriesState,
+  validatePersistedState,
+  DataIntegrityError,
+  type DataErrorReason,
+} from './migrations';
 
 export interface MemoryInput {
   location: string;
@@ -33,8 +39,8 @@ export interface FollowUpInput {
 
 export interface BootError {
   message: string;
-  /** 是否因迁移失败引起（决定恢复界面的措辞与重置按钮） */
-  migration: boolean;
+  /** 失败原因，决定恢复界面的标题与措辞 */
+  reason: DataErrorReason;
 }
 
 interface MemoryStore {
@@ -75,13 +81,13 @@ function patchFollowUp(memories: SmellMemory[], memoryId: string, fn: (p: Follow
 let rehydrateSet: (partial: Partial<MemoryStore>) => void = () => {};
 
 /** 进入“恢复模式”：封锁一切本地写入并弹出恢复界面，原始数据保持不动 */
-function enterBootError(message: string, migration: boolean) {
+function enterBootError(message: string, reason: DataErrorReason) {
   setStorageWritesBlocked(true);
   rehydrateSet({
     hydrated: true,
     bootError: {
       message: message || '本地数据无法读取',
-      migration,
+      reason,
     },
   });
 }
@@ -195,19 +201,27 @@ export const useMemoryStore = create<MemoryStore>()(
       // 每次水合的必经关口（新旧版本都走）：整库结构/字段校验。
       // 任何一条记录损坏就抛错，由 onRehydrateStorage 的 error 分支进入恢复界面，
       // 坏数据不会被合并进 store，也就不可能击穿页面。
+      // 校验器抛出的错误已带 validate/migrate/parse 原因。
       merge: (persisted, current) => {
         if (persisted === undefined || persisted === null) return current;
-        const safe = validatePersistedState(persisted);
-        return { ...current, ...safe };
+        try {
+          const safe = validatePersistedState(persisted);
+          return { ...current, ...safe };
+        } catch (e) {
+          if (e instanceof DataIntegrityError) throw e;
+          throw new DataIntegrityError('validate', e instanceof Error ? e.message : '本地数据校验失败');
+        }
       },
       onRehydrateStorage: () => (_state, error) => {
         if (error) {
-          const message = error instanceof Error ? error.message : '本地数据迁移失败';
+          const message = error instanceof Error ? error.message : '本地数据加载失败';
+          const reason: DataErrorReason =
+            error instanceof DataIntegrityError ? error.reason : 'parse';
           // zustand 的水合失败（catch）分支不会像成功分支那样在回调后用 get()
           // 回写状态；首次 create() 仍会用初始 configResult 覆盖 store。
           // 因此推迟到当前同步水合栈结束后再进入恢复模式，避免被覆盖。
           // 微任务早于 React 首次渲染，用户不会看到中间的加载态。
-          queueMicrotask(() => enterBootError(message, true));
+          queueMicrotask(() => enterBootError(message, reason));
           return;
         }
 

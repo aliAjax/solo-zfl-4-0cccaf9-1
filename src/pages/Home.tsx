@@ -92,9 +92,9 @@ export default function Home() {
     });
   };
 
-  // 本地数据恢复：原始数据迁移/解析失败时，阻断整个界面，防止任何覆盖
+  // 本地数据恢复：原始数据迁移/解析/校验失败时，阻断整个界面，防止任何覆盖
   if (bootError) {
-    return <StorageRecoveryModal message={bootError.message} migration={bootError.migration} />;
+    return <StorageRecoveryModal message={bootError.message} reason={bootError.reason} />;
   }
 
   if (!hydrated) {

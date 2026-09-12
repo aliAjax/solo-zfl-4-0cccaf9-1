@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ShieldAlert, Download, Copy, RotateCcw, Trash2, Check, ChevronDown } from 'lucide-react';
 import { useMemoryStore } from '../store/memoryStore';
 import { useToastStore } from '../store/toastStore';
+import type { DataErrorReason } from '../store/migrations';
 import {
   STORAGE_KEY,
   readRawStorage,
@@ -10,11 +11,31 @@ import {
 
 interface Props {
   message: string;
-  migration: boolean;
+  /** 失败原因，决定标题与说明措辞 */
+  reason: DataErrorReason;
   /** 渲染崩溃兜底场景：重试/重置后需要整页刷新重新水合 */
   renderError?: boolean;
   onAfterRetry?: () => void;
 }
+
+const REASON_COPY: Record<DataErrorReason, { title: string; desc: string }> = {
+  parse: {
+    title: '本地档案数据已损坏',
+    desc: '保存的内容无法被解析（可能被其他程序改写或写入中断）',
+  },
+  migrate: {
+    title: '旧版气味档案升级失败',
+    desc: '从旧版本升级时发现了无法识别的内容',
+  },
+  validate: {
+    title: '气味档案数据异常',
+    desc: '部分档案的字段或日期缺失、不合法（例如不存在的日期）',
+  },
+  render: {
+    title: '气味档案页面崩溃',
+    desc: '渲染时发生错误，可能由损坏的本地数据引起',
+  },
+};
 
 function downloadBackup(raw: string) {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
@@ -29,7 +50,13 @@ function downloadBackup(raw: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function StorageRecoveryModal({ message, migration, renderError = false, onAfterRetry }: Props) {
+export default function StorageRecoveryModal({
+  message,
+  reason,
+  renderError = false,
+  onAfterRetry,
+}: Props) {
+  const copy = REASON_COPY[renderError ? 'render' : reason];
   const retryHydration = useMemoryStore((s) => s.retryHydration);
   const showToast = useToastStore((s) => s.showToast);
   const [showRaw, setShowRaw] = useState(false);
@@ -100,10 +127,9 @@ export default function StorageRecoveryModal({ message, migration, renderError =
             </div>
             <div className="min-w-0">
               <h2 className="font-serif text-xl sm:text-2xl font-bold text-ink-800">
-                {renderError
-                  ? '气味档案数据异常'
-                  : migration ? '旧版气味档案升级失败' : '本地档案读取失败'}
+                {copy.title}
               </h2>
+              <p className="text-xs text-ink-700/55 mt-1">{copy.desc}</p>
               <p className="text-sm text-ink-700/70 mt-1 leading-relaxed">
                 别担心，你的原始数据<strong className="text-brick-600">没有被修改或覆盖</strong>，
                 仍完整保存在浏览器里。当前已暂停一切写入来保护它。

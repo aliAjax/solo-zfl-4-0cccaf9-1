@@ -1,4 +1,5 @@
-import { createJSONStorage, type StateStorage } from 'zustand/middleware';
+import type { PersistStorage } from 'zustand/middleware';
+import { DataIntegrityError } from './migrations';
 
 /** 本地保存失败时派发的事件，由全局 Toaster 监听并提示 */
 export const STORAGE_ERROR_EVENT = 'scent-archive:storage-error';
@@ -59,49 +60,61 @@ export function forceClearStorage(name: string): boolean {
 }
 
 /**
- * 包一层 try/catch 的 localStorage：
- * - 写入失败（隐私模式 / 配额超限 / 被禁用）时给出提示，但本次内存状态仍然生效；
- * - 读取失败时提示并回退到初始空状态，避免整页崩溃；
+ * 自定义持久化存储（不使用 zustand 的 createJSONStorage），目的是把
+ * “本地 JSON 无法解析”明确标记为 parse 原因，让恢复提示与真实原因一致。
+ *
+ * - 读取损坏的 JSON：抛 DataIntegrityError('parse')，由水合错误分支进入恢复界面；
+ * - 写入失败（隐私模式 / 配额超限 / 被禁用）：提示但内存状态仍生效；
  * - 写入被封锁时静默拒绝，保护迁移失败用户的原始数据。
  */
-function createSafeLocalStorage(): StateStorage {
-  return {
-    getItem: (name) => {
-      try {
-        return window.localStorage.getItem(name);
-      } catch (err) {
-        emitStorageError({
-          phase: 'read',
-          message: err instanceof Error ? err.message : '无法读取本地存储',
-        });
-        return null;
-      }
-    },
-    setItem: (name, value) => {
-      if (writesBlocked) return;
-      try {
-        window.localStorage.setItem(name, value);
-      } catch (err) {
-        emitStorageError({
-          phase: 'write',
-          message: err instanceof Error ? err.message : '本地存储空间不足或已被禁用',
-        });
-      }
-    },
-    removeItem: (name) => {
-      if (writesBlocked) return;
-      try {
-        window.localStorage.removeItem(name);
-      } catch (err) {
-        emitStorageError({
-          phase: 'write',
-          message: err instanceof Error ? err.message : '无法写入本地存储',
-        });
-      }
-    },
-  };
-}
-
-export const safeLocalStorage = createJSONStorage(createSafeLocalStorage);
+/**
+ * 自定义持久化存储（不使用 zustand 的 createJSONStorage），目的是把
+ * “本地 JSON 无法解析”明确标记为 parse 原因，让恢复提示与真实原因一致。
+ * 这里读到的内容尚未经过结构校验，因此以最宽松的形状声明，校验在 merge 关口统一进行。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const safeLocalStorage: PersistStorage<any> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getItem: (name): any => {
+    let raw: string | null;
+    try {
+      raw = window.localStorage.getItem(name);
+    } catch (err) {
+      emitStorageError({
+        phase: 'read',
+        message: err instanceof Error ? err.message : '无法读取本地存储',
+      });
+      return null;
+    }
+    if (raw === null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new DataIntegrityError('parse', '本地数据不是合法的 JSON 格式，可能已被损坏或被其他程序改写');
+    }
+  },
+  setItem: (name, value) => {
+    if (writesBlocked) return;
+    try {
+      window.localStorage.setItem(name, JSON.stringify(value));
+    } catch (err) {
+      emitStorageError({
+        phase: 'write',
+        message: err instanceof Error ? err.message : '本地存储空间不足或已被禁用',
+      });
+    }
+  },
+  removeItem: (name) => {
+    if (writesBlocked) return;
+    try {
+      window.localStorage.removeItem(name);
+    } catch (err) {
+      emitStorageError({
+        phase: 'write',
+        message: err instanceof Error ? err.message : '无法写入本地存储',
+      });
+    }
+  },
+};
 
 export const STORAGE_KEY = 'scent-memory-storage';
