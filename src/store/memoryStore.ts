@@ -39,7 +39,7 @@ export interface BootError {
 
 interface MemoryStore {
   memories: SmellMemory[];
-  /** 首次读取本地数据是否已完成（完成前不允许写入示例数据） */
+  /** 首次读取本地数据是否已完成（完成前界面显示加载态） */
   hydrated: boolean;
   /** 本地数据迁移/解析失败时的错误信息；非空时界面进入恢复流程 */
   bootError: BootError | null;
@@ -65,10 +65,19 @@ function patchFollowUp(memories: SmellMemory[], memoryId: string, fn: (p: Follow
   return memories.map((m) => (m.id === memoryId && m.follow_up ? { ...m, follow_up: fn(m.follow_up) } : m));
 }
 
-function enterBootError(set: (partial: Partial<MemoryStore>) => void, message: string, migration: boolean) {
-  // 封锁一切写入：原始数据原封不动留在 localStorage，等用户处理
+/**
+ * 水合期间可用的 setState。
+ * 关键：localStorage 是同步的，zustand 会在 create() 执行过程中同步触发
+ * onRehydrateStorage 回调，此刻模块底部的 useMemoryStore 常量还没完成初始化，
+ * 在回调里引用 useMemoryStore.setState 会抛 undefined。
+ * 所以在 store creator 执行时（一定早于水合）把 api.setState 捕获到这里。
+ */
+let rehydrateSet: (partial: Partial<MemoryStore>) => void = () => {};
+
+/** 进入“恢复模式”：封锁一切本地写入并弹出恢复界面，原始数据保持不动 */
+function enterBootError(message: string, migration: boolean) {
   setStorageWritesBlocked(true);
-  set({
+  rehydrateSet({
     hydrated: true,
     bootError: {
       message: message || '本地数据无法读取',
@@ -79,100 +88,104 @@ function enterBootError(set: (partial: Partial<MemoryStore>) => void, message: s
 
 export const useMemoryStore = create<MemoryStore>()(
   persist(
-    (set, get) => ({
-      memories: [],
-      hydrated: false,
-      bootError: null,
+    (set, get, api) => {
+      rehydrateSet = api.setState as (partial: Partial<MemoryStore>) => void;
 
-      addMemory: (input) => {
-        const now = new Date().toISOString();
-        const newMem: SmellMemory = {
-          id: generateId(),
-          ...input,
-          created_at: now,
-          updated_at: now,
-        };
-        set({ memories: [newMem, ...get().memories] });
-      },
-      updateMemory: (id, input) => {
-        set({
-          memories: get().memories.map((m) =>
-            m.id === id
-              ? { ...m, ...input, updated_at: new Date().toISOString() }
-              : m,
-          ),
-        });
-      },
-      deleteMemory: (id) => {
-        lastCompletedAt.delete(id);
-        set({ memories: get().memories.filter((m) => m.id !== id) });
-      },
-      setFollowUp: (memoryId, input) => {
-        const target = get().memories.find((m) => m.id === memoryId);
-        if (!target || !input.next_date) return false;
+      return {
+        memories: [],
+        hydrated: false,
+        bootError: null,
 
-        const now = new Date().toISOString();
-        const existing = target.follow_up;
-        const plan: FollowUpPlan = {
-          next_date: input.next_date,
-          frequency: input.frequency,
-          note: input.note,
-          logs: existing?.logs ?? [],
-          created_at: existing?.created_at ?? now,
-          updated_at: now,
-        };
-        set({
-          memories: get().memories.map((m) =>
-            m.id === memoryId ? { ...m, follow_up: plan } : m,
-          ),
-        });
-        lastCompletedAt.delete(memoryId);
-        return true;
-      },
-      removeFollowUp: (memoryId) => {
-        lastCompletedAt.delete(memoryId);
-        set({
-          memories: get().memories.map((m) =>
-            m.id === memoryId ? { ...m, follow_up: null } : m,
-          ),
-        });
-      },
-      completeFollowUp: (memoryId) => {
-        const target = get().memories.find((m) => m.id === memoryId);
-        const plan = target?.follow_up;
-        if (!target || !plan || !plan.next_date) return null;
+        addMemory: (input) => {
+          const now = new Date().toISOString();
+          const newMem: SmellMemory = {
+            id: generateId(),
+            ...input,
+            created_at: now,
+            updated_at: now,
+          };
+          set({ memories: [newMem, ...get().memories] });
+        },
+        updateMemory: (id, input) => {
+          set({
+            memories: get().memories.map((m) =>
+              m.id === id
+                ? { ...m, ...input, updated_at: new Date().toISOString() }
+                : m,
+            ),
+          });
+        },
+        deleteMemory: (id) => {
+          lastCompletedAt.delete(id);
+          set({ memories: get().memories.filter((m) => m.id !== id) });
+        },
+        setFollowUp: (memoryId, input) => {
+          const target = get().memories.find((m) => m.id === memoryId);
+          if (!target || !input.next_date) return false;
 
-        // 防连点：去抖窗口内的重复完成一律忽略，保证只产生一条记录
-        const nowMs = Date.now();
-        const lastMs = lastCompletedAt.get(memoryId);
-        if (lastMs !== undefined && nowMs - lastMs < COMPLETE_DEDUP_MS) return null;
+          const now = new Date().toISOString();
+          const existing = target.follow_up;
+          const plan: FollowUpPlan = {
+            next_date: input.next_date,
+            frequency: input.frequency,
+            note: input.note,
+            logs: existing?.logs ?? [],
+            created_at: existing?.created_at ?? now,
+            updated_at: now,
+          };
+          set({
+            memories: get().memories.map((m) =>
+              m.id === memoryId ? { ...m, follow_up: plan } : m,
+            ),
+          });
+          lastCompletedAt.delete(memoryId);
+          return true;
+        },
+        removeFollowUp: (memoryId) => {
+          lastCompletedAt.delete(memoryId);
+          set({
+            memories: get().memories.map((m) =>
+              m.id === memoryId ? { ...m, follow_up: null } : m,
+            ),
+          });
+        },
+        completeFollowUp: (memoryId) => {
+          const target = get().memories.find((m) => m.id === memoryId);
+          const plan = target?.follow_up;
+          if (!target || !plan || !plan.next_date) return null;
 
-        const now = new Date();
-        const logId = generateId();
-        const log = {
-          completed_at: now.toISOString(),
-          scheduled_date: plan.next_date,
-          note: plan.note,
-        };
-        const nextDate = advanceDate(plan.next_date, plan.frequency, now);
-        const updated: FollowUpPlan = {
-          ...plan,
-          next_date: nextDate,
-          logs: [log, ...plan.logs],
-          updated_at: now.toISOString(),
-        };
-        set({ memories: patchFollowUp(get().memories, memoryId, () => updated) });
-        lastCompletedAt.set(memoryId, nowMs);
-        return logId;
-      },
+          // 防连点：去抖窗口内的重复完成一律忽略，保证只产生一条记录
+          const nowMs = Date.now();
+          const lastMs = lastCompletedAt.get(memoryId);
+          if (lastMs !== undefined && nowMs - lastMs < COMPLETE_DEDUP_MS) return null;
 
-      retryHydration: () => {
-        // 只解除封锁并重置错误标记；不 setState 内存数据，
-        // 否则 persist 会在重新读取前把（可能仍损坏的）原始数据覆盖掉。
-        setStorageWritesBlocked(false);
-        useMemoryStore.persist.rehydrate();
-      },
-    }),
+          const now = new Date();
+          const logId = generateId();
+          const log = {
+            completed_at: now.toISOString(),
+            scheduled_date: plan.next_date,
+            note: plan.note,
+          };
+          const nextDate = advanceDate(plan.next_date, plan.frequency, now);
+          const updated: FollowUpPlan = {
+            ...plan,
+            next_date: nextDate,
+            logs: [log, ...plan.logs],
+            updated_at: now.toISOString(),
+          };
+          set({ memories: patchFollowUp(get().memories, memoryId, () => updated) });
+          lastCompletedAt.set(memoryId, nowMs);
+          return logId;
+        },
+
+        retryHydration: () => {
+          // 只解除封锁并重新读取；不预先 setState 内存数据，
+          // 否则 persist 会在重新读取前把（可能仍损坏的）原始数据覆盖掉。
+          setStorageWritesBlocked(false);
+          useMemoryStore.persist.rehydrate();
+        },
+      };
+    },
     {
       name: STORAGE_KEY,
       storage: safeLocalStorage,
@@ -181,12 +194,12 @@ export const useMemoryStore = create<MemoryStore>()(
       migrate: (persisted, fromVersion) => migrateMemoriesState(persisted, fromVersion),
       onRehydrateStorage: () => (_state, error) => {
         if (error) {
-          // 迁移函数抛错 / JSON 解析失败等：保留原始数据，不做任何写入
-          enterBootError(
-            useMemoryStore.setState.bind(useMemoryStore),
-            error instanceof Error ? error.message : '本地数据迁移失败',
-            true,
-          );
+          const message = error instanceof Error ? error.message : '本地数据迁移失败';
+          // zustand 的水合失败（catch）分支不会像成功分支那样在回调后用 get()
+          // 回写状态；首次 create() 仍会用初始 configResult 覆盖 store。
+          // 因此推迟到当前同步水合栈结束后再进入恢复模式，避免被覆盖。
+          // 微任务早于 React 首次渲染，用户不会看到中间的加载态。
+          queueMicrotask(() => enterBootError(message, true));
           return;
         }
 
@@ -196,10 +209,10 @@ export const useMemoryStore = create<MemoryStore>()(
         // 用户主动删光档案（持久化为空数组）后刷新必须保持空白，不能被示例覆盖。
         const hadPersistedData = readRawStorage(STORAGE_KEY) !== null;
         if (!hadPersistedData) {
-          useMemoryStore.setState({ memories: mockMemories, bootError: null, hydrated: true });
+          rehydrateSet({ memories: mockMemories, bootError: null, hydrated: true });
         } else {
-          // zustand 已合并 memories，这里只需解除错误标记
-          useMemoryStore.setState({ bootError: null, hydrated: true });
+          // zustand 已完成 memories 合并，这里只需解除加载/错误态
+          rehydrateSet({ bootError: null, hydrated: true });
         }
       },
     },
